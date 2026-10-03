@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>VESSEL — Elevator of the Ashenwake</title>
+<style>
+  :root {
+    --bg: #07090d;
+    --panel: #10161f;
+    --line: #243044;
+    --amber: #e8b15a;
+    --cyan: #6fd3c7;
+    --red: #d96b6b;
+    --text: #d7e0ea;
+    --dim: #8b97a8;
+    --ok: #7dca8a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; }
+  body { display: flex; justify-content: center; }
+  #app { width: min(520px, 100%); height: 100%; display: flex; flex-direction: column;
+    background: radial-gradient(1200px 500px at 50% -10%, #1a2433 0%, var(--bg) 55%); }
+  header { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); display: flex;
+    justify-content: space-between; gap: 10px; align-items: flex-end; }
+  h1 { margin: 0; font-size: 15px; letter-spacing: 0.22em; color: var(--amber); font-weight: 600; }
+  .sub { font-size: 11px; color: var(--dim); letter-spacing: 0.08em; margin-top: 2px; }
+  .stats { display: flex; gap: 10px; font-size: 11px; color: var(--cyan); }
+  .stats b { color: var(--text); font-weight: 600; }
+  #log { flex: 1; overflow: auto; padding: 12px 14px 8px; font-size: 14.5px; line-height: 1.45; }
+  .entry { margin: 0 0 10px; }
+  .entry .who { color: var(--amber); font-size: 11px; letter-spacing: 0.12em; }
+  .entry.sys { color: var(--dim); }
+  .entry.good { color: var(--ok); }
+  .entry.bad { color: var(--red); }
+  .place { border: 1px solid var(--line); background: var(--panel); padding: 10px 12px; margin-bottom: 10px; }
+  .place h2 { margin: 0 0 4px; font-size: 16px; color: var(--cyan); }
+  .place p { margin: 0; color: var(--dim); font-size: 13px; }
+  #actions { border-top: 1px solid var(--line); padding: 10px; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 8px; background: #0b1016; }
+  button { background: #16202c; color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 11px 8px; font-size: 13px; cursor: pointer; }
+  button:active { transform: translateY(1px); background: #1d2b3c; }
+  button.primary { border-color: #3d5a4a; color: var(--ok); }
+  button.warn { border-color: #5a3d3d; color: var(--red); }
+  button.wide { grid-column: 1 / -1; }
+  #inv { font-size: 12px; color: var(--dim); padding: 0 14px 8px; min-height: 18px; }
+  #inv span { color: var(--amber); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>ASHENWAKE</h1>
+      <div class="sub" id="deckLabel">DECK 04 · LIFT CORE</div>
+    </div>
+    <div class="stats">
+      <div>O₂ <b id="oxy">100</b></div>
+      <div>HP <b id="hp">100</b></div>
+      <div>CR <b id="cr">0</b></div>
+    </div>
+  </header>
+  <div id="log"></div>
+  <div id="inv">Pack: <span id="pack">empty</span></div>
+  <div id="actions"></div>
+</div>
+<script>
+const floors = {
+  1: { name: "Reactor Throat", blurb: "Heat haze and warning strobes. The core is idling, not dead." },
+  2: { name: "Cargo Spine", blurb: "Crates lashed to rails. Something scraped the paint recently." },
+  3: { name: "Hydroponics", blurb: "Wet air, violet grow-lamps, leaves tapping the glass." },
+  4: { name: "Lift Core", blurb: "The elevator. Brass-dark panels, a stuck floor light, your reflection." },
+  5: { name: "Crew Ring", blurb: "Bunks, a mess table, a kettle that still clicks." },
+  6: { name: "Medbay", blurb: "Cold tiles. One bed occupied by a sleeping diagnostic drone." },
+  7: { name: "Armory", blurb: "Locked cages. Most empty. One not." },
+  8: { name: "Bridge", blurb: "A crescent of dead screens and one that is not dead." }
+};
+
+const state = {
+  deck: 4,
+  inLift: true,
+  hp: 100, oxy: 100, cr: 0,
+  inv: [],
+  flags: {},
+  log: []
+};
+
+const $ = (id) => document.getElementById(id);
+
+function say(text, cls = "") {
+  state.log.push({ text, cls });
+  const el = document.createElement("div");
+  el.className = "entry " + cls;
+  el.textContent = text;
+  $("log").appendChild(el);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function refresh() {
+  const f = floors[state.deck];
+  $("deckLabel").textContent = state.inLift
+    ? `LIFT · STOPPED AT DECK ${String(state.deck).padStart(2,"0")}`
+    : `DECK ${String(state.deck).padStart(2,"0")} · ${f.name.toUpperCase()}`;
+  $("hp").textContent = state.hp;
+  $("oxy").textContent = state.oxy;
+  $("cr").textContent = state.cr;
+  $("pack").textContent = state.inv.length ? state.inv.join(", ") : "empty";
+  renderActions();
+}
+
+function has(item) { return state.inv.includes(item); }
+function take(item) {
+  if (!has(item)) state.inv.push(item);
+}
+function drop(item) {
+  state.inv = state.inv.filter(x => x !== item);
+}
+
+function setActions(btns) {
+  const box = $("actions");
+  box.innerHTML = "";
+  btns.forEach(b => {
+    const el = document.createElement("button");
+    el.textContent = b.label;
+    if (b.cls) el.className = b.cls;
+    el.onclick = b.fn;
+    box.appendChild(el);
+  });
+}
+
+function renderActions() {
+  if (state.hp <= 0) {
+    setActions([{ label: "Restart watch", cls: "wide primary", fn: () => location.reload() }]);
+    return;
+  }
+  if (state.flags.won) {
+    setActions([{ label: "Ride the ship again", cls: "wide primary", fn: () => location.reload() }]);
+    return;
+  }
+  if (state.inLift) {
+    const btns = [];
+    if (state.deck < 8) btns.push({ label: "▲ Up", fn: () => moveLift(1) });
+    else btns.push({ label: "▲ Top deck", fn: () => say("The lift will not climb past the bridge.", "sys") });
+    if (state.deck > 1) btns.push({ label: "▼ Down", fn: () => moveLift(-1) });
+    else btns.push({ label: "▼ Keel", fn: () => say("Deck 1 is the lowest stop. Below that is hull.", "sys") });
+    btns.push({ label: "Open doors", cls: "wide primary", fn: exitLift });
+    btns.push({ label: "Check panel", fn: panel });
+    btns.push({ label: "Use item", fn: useItem });
+    setActions(btns);
+    return;
+  }
+  exploreActions();
+}
+
+function moveLift(dir) {
+  state.deck += dir;
+  say(`The car shudders and settles on deck ${state.deck}. ${floors[state.deck].name}.`);
+  state.oxy = Math.max(0, state.oxy - 1);
+  refresh();
+}
+
+function panel() {
+  const broken = !state.flags.powerFixed;
+  say(broken
+    ? "Panel: auxiliary power unstable. Bridge lock engaged. Engineering key missing from its slot."
+    : "Panel: auxiliary power steady. Bridge lock clear. All decks answering.");
+}
+
+function exitLift() {
+  if (state.deck === 8 && !state.flags.powerFixed) {
+    say("The bridge doors stay sealed. A red line on the panel: REACTOR KEY REQUIRED.", "bad");
+    return;
+  }
+  state.inLift = false;
+  const f = floors[state.deck];
+  say(`You step onto ${f.name}. ${f.blurb}`);
+  refresh();
+}
+
+function backToLift() {
+  state.inLift = true;
+  say("You return to the lift. The doors sigh shut.");
+  refresh();
+}
+
+function hurt(n, why) {
+  state.hp = Math.max(0, state.hp - n);
+  say(why, "bad");
+  if (state.hp <= 0) say("The ship keeps its lights. You do not.", "bad");
+}
+
+function exploreActions() {
+  const d = state.deck;
+  const btns = [{ label: "Return to lift", cls: "wide", fn: backToLift }];
+  if (d === 1) {
+    btns.push({ label: "Inspect core", fn: () => {
+      if (!state.flags.sawCore) {
+        state.flags.sawCore = true;
+        say("The throat is stable but starved. A key slot glows beside a handwritten tag: BRIDGE.");
+      } else say("Still idling. The key slot waits.");
+    }});
+    btns.push({ label: "Install reactor key", cls: "primary", fn: () => {
+      if (!has("reactor key")) { say("You have no key that fits.", "sys"); return; }
+      drop("reactor key");
+      state.flags.powerFixed = true;
+      say("The key seats. The core climbs from idle to a clean hum. Bridge lock clears.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Search gantry", fn: () => {
+      if (state.flags.gantry) { say("Nothing else on the gantry."); return; }
+      state.flags.gantry = true;
+      state.cr += 12;
+      say("A maintenance pouch: 12 credits and a burnt glove. You keep the credits.", "good");
+      refresh();
+    }});
+  }
+  if (d === 2) {
+    btns.push({ label: "Pry crate", fn: () => {
+      if (state.flags.crate) { say("The crate is empty ribs now."); return; }
+      if (!has("pry bar")) { say("Sealed. You need a bar or a bad idea."); return; }
+      state.flags.crate = true;
+      take("medpatch");
+      state.cr += 20;
+      say("Inside: a medpatch and 20 credits stamped ASHENWAKE STORES.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Follow scrape marks", fn: () => {
+      if (state.flags.stalker) {
+        say("The bay is quiet. The thing already tried you.");
+        return;
+      }
+      state.flags.stalker = true;
+      if (has("sidearm")) {
+        say("A maintenance drone lurches out. Your sidearm cooks its optic. It drops a coil.", "good");
+        take("power coil");
+      } else {
+        hurt(18, "A maintenance drone clips you with a cutter arm before you kick it into a rail. −18 HP.");
+        take("power coil");
+        say("It dies anyway. A power coil rolls free.", "good");
+      }
+      refresh();
+    }});
+  }
+  if (d === 3) {
+    btns.push({ label: "Harvest bay", fn: () => {
+      if (state.flags.herbs) { say("The ripe trays are picked."); return; }
+      state.flags.herbs = true;
+      take("leaf packet");
+      state.oxy = Math.min(100, state.oxy + 15);
+      say("You pocket a leaf packet. The wet air lifts your oxygen a little.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Talk to the gardener", fn: () => {
+      say("A voice from the irrigation trunk: \"Key's in the captain's bunk. She never trusted the armory. Don't wake the bridge until the core is fed.\"");
+      state.flags.hint = true;
+    }});
+  }
+  if (d === 5) {
+    btns.push({ label: "Search captain bunk", fn: () => {
+      if (state.flags.bunk) { say("Bunk stripped. You already took what mattered."); return; }
+      state.flags.bunk = true;
+      take("reactor key");
+      say("Under the mattress: a reactor key on a frayed lanyard.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Mess table", fn: () => {
+      if (state.flags.mess) { say("Crumbs and a cold kettle."); return; }
+      state.flags.mess = true;
+      state.hp = Math.min(100, state.hp + 8);
+      say("You drink the last sweet coffee. +8 HP.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Read log slate", fn: () => {
+      say("Captain's slate: \"Courier job. Do not open crate 7. If the lift sticks, the gardener knows the core. If I don't answer the bridge, plot for Spokane drift is a joke. Plot for open dark.\"");
+    }});
+  }
+  if (d === 6) {
+    btns.push({ label: "Wake the drone", fn: () => {
+      if (state.flags.med) { say("The diagnostic drone is asleep again, job done."); return; }
+      if (!has("power coil")) { say("Its bay is empty. It wants a power coil."); return; }
+      drop("power coil");
+      state.flags.med = true;
+      state.hp = Math.min(100, state.hp + 30);
+      state.oxy = Math.min(100, state.oxy + 20);
+      say("The drone knits a field over you. +30 HP, +20 O₂. It chirps once and sleeps.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Cabinet", fn: () => {
+      if (has("medpatch") || state.flags.cab) { say("Cabinet picked clean."); return; }
+      state.flags.cab = true;
+      take("medpatch");
+      say("One medpatch left in the cabinet.", "good");
+      refresh();
+    }});
+  }
+  if (d === 7) {
+    btns.push({ label: "Force cage", fn: () => {
+      if (state.flags.arm) { say("The cage hangs open."); return; }
+      if (!has("pry bar") && state.cr < 15) {
+        say("Maglock. A pry bar would do it, or 15 credits in the bypass.");
+        return;
+      }
+      if (!has("pry bar")) { state.cr -= 15; say("You feed the bypass 15 credits."); }
+      state.flags.arm = true;
+      take("sidearm");
+      say("A ship sidearm, charged, and a pry bar if you didn't already have one.", "good");
+      if (!has("pry bar")) take("pry bar");
+      refresh();
+    }});
+    btns.push({ label: "Wall locker", fn: () => {
+      if (has("pry bar")) { say("Locker empty."); return; }
+      take("pry bar");
+      say("A pry bar, paint still wet from cargo.", "good");
+      refresh();
+    }});
+  }
+  if (d === 8) {
+    btns.push({ label: "Take the helm", cls: "primary", fn: () => {
+      say("The live screen accepts you. Course: open dark, away from the courier's employers.");
+      if (has("leaf packet")) say("You set the gardener's tray on the console. The ship smells alive.");
+      state.flags.won = true;
+      say("Ashenwake answers. You are no longer cargo. You are the watch.", "good");
+      refresh();
+    }});
+    btns.push({ label: "Play last recording", fn: () => {
+      say("Captain, tired: \"If you're hearing this from the lift, you already did the hard part. Don't sell the ship. She still knows the way home.\"");
+    }});
+  }
+  btns.push({ label: "Use item", fn: useItem });
+  setActions(btns);
+}
+
+function useItem() {
+  if (!state.inv.length) { say("Pack is empty.", "sys"); return; }
+  const choice = state.inv[0] === "medpatch" ? "medpatch" : state.inv.find(i => i === "medpatch") || state.inv[0];
+  if (has("medpatch")) {
+    drop("medpatch");
+    state.hp = Math.min(100, state.hp + 25);
+    say("Medpatch bites and holds. +25 HP.", "good");
+    refresh();
+    return;
+  }
+  if (has("leaf packet")) {
+    drop("leaf packet");
+    state.oxy = Math.min(100, state.oxy + 20);
+    say("You chew a bitter leaf. +20 O₂.", "good");
+    refresh();
+    return;
+  }
+  say(`You turn the ${choice} over. Nothing to use here.`);
+}
+
+function boot() {
+  say("You come to in the lift of the courier ship Ashenwake. The car is stopped on deck 4. Lights are emergency-amber. No crew answers.");
+  say("Up and down the shaft. Open the doors when you want a deck. The bridge will not take you until the core is fed.");
+  refresh();
+}
+boot();
+</script>
+</body>
+</html>
